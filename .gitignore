@@ -1,0 +1,7 @@
+# Claude Max Proxy – .gitignore
+.env
+*.pyc
+__pycache__/
+*.log
+node_modules/
+.DS_Store

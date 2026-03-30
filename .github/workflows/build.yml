@@ -1,0 +1,102 @@
+name: 🐳 Build & Push Docker Images
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'proxy/**'
+      - 'claude-auth/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:   # تشغيل يدوي من GitHub UI
+
+env:
+  REGISTRY: ghcr.io
+  # اسم الـ repo تلقائياً من github.repository
+  IMAGE_BASE: ghcr.io/${{ github.repository_owner }}
+
+jobs:
+  build-and-push:
+    name: Build & Push
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write   # لازم لرفع الـ image على ghcr.io
+
+    strategy:
+      matrix:
+        include:
+          - service: claude-proxy
+            context: ./proxy
+            dockerfile: ./proxy/Dockerfile
+          - service: claude-auth
+            context: ./claude-auth
+            dockerfile: ./claude-auth/Dockerfile
+
+    steps:
+      # ── 1. Checkout
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Setup QEMU (multi-arch support: amd64 + arm64)
+      - name: ⚙️ Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # ── 3. Setup Buildx
+      - name: 🔧 Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── 4. Login to GitHub Container Registry
+      - name: 🔐 Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── 5. Extract metadata (tags & labels)
+      - name: 🏷️ Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/${{ matrix.service }}
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=sha-,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      # ── 6. Build & Push
+      - name: 🚀 Build and push ${{ matrix.service }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Job: Summary بعد البناء
+  summary:
+    name: 📋 Summary
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request'
+    steps:
+      - name: 📊 Print image details
+        run: |
+          echo "## ✅ Images Published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Image | Tag |" >> $GITHUB_STEP_SUMMARY
+          echo "|-------|-----|" >> $GITHUB_STEP_SUMMARY
+          echo "| \`ghcr.io/${{ github.repository_owner }}/claude-proxy\` | \`latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "| \`ghcr.io/${{ github.repository_owner }}/claude-auth\` | \`latest\` |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Deploy Command" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "docker stack deploy -c stack.yml claude-proxy" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
