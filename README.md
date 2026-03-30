@@ -1,115 +1,126 @@
 # 🤖 Claude Max Proxy
 
-> بروكسي يتصل بحساب **Claude Max** على claude.ai ويعرض **OpenAI-compatible API**  
-> تربطه في LiteLLM أو أي تطبيق يدعم OpenAI API
+> Container واحد يجمع **Claude CLI** + **OpenAI-compatible API**  
+> سجّل دخولك مرة وحدة، وابدأ تستخدم Claude Max من أي تطبيق يدعم OpenAI API
 
-[![Build & Push](https://github.com/YOUR_USERNAME/claude-max-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/YOUR_USERNAME/claude-max-proxy/actions/workflows/build.yml)
-
----
-
-## 📁 الملفات
-
-| الملف | الاستخدام |
-|---|---|
-| `docker-compose.yml` | بناء الـ images محلياً وتشغيلها |
-| `stack.yml` | سحب الـ images الجاهزة من ghcr.io وتشغيلها |
-| `.github/workflows/build.yml` | GitHub Actions يبني الـ images تلقائياً عند كل push |
+[![Build & Push](https://github.com/twuijri/claude-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/twuijri/claude-proxy/actions/workflows/build.yml)
 
 ---
 
 ## 🏗️ كيف يعمل
 
 ```
-LiteLLM / أي تطبيق
-        │  OpenAI API
-        ▼
-  claude-proxy :8080
-        │  يقرأ OAuth token تلقائياً
-        ▼
-  Volume: claude-credentials
-        │  يحفظ فيه التوكن
-        ▼
-  claude-auth (Claude CLI)   ← تسجّل دخولك هنا مرة وحدة
-        │
-        ▼
-    claude.ai ← حسابك Claude Max
+docker exec -it claude-proxy claude   ← تسجيل الدخول (مرة وحدة)
+                  │
+                  ▼
+         /root/.claude/credentials.json  (داخل الـ volume)
+                  │
+                  ▼
+         FastAPI :8080  ←  LiteLLM / OpenWebUI / أي تطبيق
 ```
 
 ---
 
-## 🚀 طريقة 1 – docker-compose.yml (بناء محلي)
-
-استخدم هذا إذا تبي تبني الـ image على نفس السيرفر.
-
-```bash
-# 1. استنسخ المشروع
-git clone https://github.com/YOUR_USERNAME/claude-max-proxy.git
-cd claude-max-proxy
-
-# 2. إعداد البيئة
-cp .env.example .env
-nano .env          # عدّل PROXY_API_KEY فقط
-
-# 3. بناء وتشغيل
-docker compose up -d --build
-
-# 4. تسجيل الدخول (مرة وحدة)
-docker exec -it claude-auth claude
-
-# 5. تحقق
-curl http://localhost:8080/
-```
-
----
-
-## 🚀 طريقة 2 – stack.yml (images جاهزة من ghcr.io)
-
-استخدم هذا في **Portainer** أو على أي سيرفر بدون بناء محلي.  
-**ملاحظة:** يلزم أولاً رفع المشروع على GitHub وانتهاء GitHub Actions من البناء.
-
-### عبر Command Line
-
-```bash
-# عدّل YOUR_GITHUB_USERNAME في stack.yml أولاً
-# ثم:
-export GITHUB_USERNAME=your_github_username
-export PROXY_API_KEY=your-proxy-key
-
-docker compose -f stack.yml up -d
-
-# تسجيل الدخول
-docker exec -it claude-auth claude
-```
-
-### عبر Portainer
+## 🚀 طريقة 1 – Portainer (الأسهل)
 
 ```
 Stacks → Add Stack → Web editor
 ```
-الصق محتوى `stack.yml` ثم أضف في **Environment Variables**:
+
+الصق هذا كامل:
+
+```yaml
+version: "3.9"
+
+services:
+  claude-proxy:
+    image: ghcr.io/twuijri/claude-proxy:latest
+    container_name: claude-proxy
+    restart: unless-stopped
+    environment:
+      PROXY_API_KEY: ${PROXY_API_KEY:-proxy-key-change-me}
+      CLAUDE_ORG_ID: ${CLAUDE_ORG_ID:-}
+      CLAUDE_CREDENTIALS_FILE: /root/.claude/credentials.json
+    volumes:
+      - claude-credentials:/root/.claude
+    ports:
+      - "${PROXY_PORT:-8080}:8080"
+
+volumes:
+  claude-credentials:
+```
+
+أضف في **Environment Variables** في Portainer:
 
 | Variable | Value |
 |---|---|
-| `GITHUB_USERNAME` | اسمك على GitHub |
-| `PROXY_API_KEY` | المفتاح الذي اخترته |
+| `PROXY_API_KEY` | اختر مفتاح عشوائي (مثال: `mysecretkey123`) |
+| `PROXY_PORT` | `8080` (اختياري) |
+
+---
+
+## 🚀 طريقة 2 – docker compose (بناء محلي)
+
+```bash
+# 1. استنسخ المشروع
+git clone https://github.com/twuijri/claude-proxy.git
+cd claude-proxy
+
+# 2. إعداد البيئة
+cp .env.example .env
+nano .env   # عدّل PROXY_API_KEY
+
+# 3. بناء وتشغيل
+docker compose up -d --build
+```
+
+---
+
+## 🔐 تسجيل الدخول (مرة وحدة)
+
+بعد تشغيل الـ container:
+
+```bash
+docker exec -it claude-proxy claude
+```
+
+سيظهر لك رابط – افتحه في المتصفح وسجّل دخولك بحساب Claude Max.  
+بعد النجاح، الـ API يشتغل تلقائياً بدون restart.
+
+> **الـ credentials محفوظة في Volume** – تبقى حتى لو حذفت الـ container وأعدت تشغيله.
+
+### التحقق من الاتصال:
+
+```bash
+curl http://YOUR_SERVER_IP:8080/
+```
+
+الرد المتوقع بعد تسجيل الدخول:
+```json
+{
+  "service": "Claude Max Proxy",
+  "authenticated": true,
+  "auth_source": "claude-cli"
+}
+```
 
 ---
 
 ## 🔗 إضافته في LiteLLM
 
-في `litellm-config.yaml` الخاص بك:
+في `litellm-config.yaml`:
 
 ```yaml
 model_list:
-  - model_name: claude-max
+  - model_name: claude-sonnet-4-6
     litellm_params:
-      model: openai/claude-max
+      model: anthropic/claude-sonnet-4-6
       api_base: http://YOUR_SERVER_IP:8080/v1
       api_key: YOUR_PROXY_API_KEY
 
-  - model_name: claude-sonnet
+  - model_name: claude-opus-4-6
     litellm_params:
-      model: openai/claude-sonnet-4-5
+      model: anthropic/claude-opus-4-6
       api_base: http://YOUR_SERVER_IP:8080/v1
       api_key: YOUR_PROXY_API_KEY
 ```
@@ -118,27 +129,19 @@ model_list:
 
 ---
 
-## 🐙 GitHub Actions – البناء التلقائي
-
-**قبل الـ push – فعّل صلاحية الكتابة:**
-> GitHub → Settings → Actions → General → Workflow permissions → ✅ **Read and write permissions**
-
-عند كل push على `main` يبني تلقائياً:
-- `ghcr.io/YOUR_USERNAME/claude-proxy:latest`
-- `ghcr.io/YOUR_USERNAME/claude-auth:latest`
-
-يدعم: `linux/amd64` + `linux/arm64`
-
----
-
 ## 🛡️ النماذج المتاحة
 
-| Model Name | يشير إلى |
+| Model Name | الموديل |
 |---|---|
-| `claude-max` | claude-opus-4-5 (الأقوى) |
-| `claude-opus-4-5` | claude-opus-4-5 |
-| `claude-sonnet-4-5` | claude-sonnet-4-5 |
-| `claude-haiku-4-5` | claude-haiku-4-5 |
+| `claude-sonnet-4-6` | ✅ الافتراضي – الأحدث |
+| `claude-opus-4-6` | الأقوى |
+| `claude-sonnet-4-5` | جيل سابق |
+| `claude-opus-4-5` | جيل سابق |
+| `claude-haiku-4-5` | الأسرع |
+| `claude-sonnet` | → claude-sonnet-4-6 |
+| `claude-opus` | → claude-opus-4-6 |
+| `gpt-4` | → claude-opus-4-6 |
+| `gpt-4o` | → claude-sonnet-4-6 |
 
 ---
 
@@ -148,17 +151,17 @@ model_list:
 |---|---|
 | `GET /` | الحالة العامة + حالة المصادقة |
 | `GET /health` | health check |
-| `POST /auth/refresh` | إعادة تحميل التوكن بدون restart |
+| `POST /auth/refresh` | إعادة تحميل الـ token بدون restart |
 | `GET /v1/models` | قائمة النماذج |
-| `POST /v1/chat/completions` | إرسال طلب (OpenAI format) |
+| `POST /v1/chat/completions` | OpenAI-compatible chat |
 
 ---
 
-## 🔄 تجديد المصادقة
+## 🔄 تجديد المصادقة (إذا انتهت الجلسة)
 
 ```bash
-docker exec -it claude-auth claude logout
-docker exec -it claude-auth claude
+docker exec -it claude-proxy claude logout
+docker exec -it claude-proxy claude
 curl -X POST http://YOUR_SERVER_IP:8080/auth/refresh
 ```
 
@@ -170,5 +173,15 @@ curl -X POST http://YOUR_SERVER_IP:8080/auth/refresh
 curl http://YOUR_SERVER_IP:8080/v1/chat/completions \
   -H "Authorization: Bearer YOUR_PROXY_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-max","messages":[{"role":"user","content":"مرحبا!"}]}'
+  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"مرحبا!"}]}'
 ```
+
+---
+
+## 🐙 GitHub Actions
+
+عند كل push على `main` يبني تلقائياً:
+- `ghcr.io/twuijri/claude-proxy:latest` (amd64 + arm64)
+
+**قبل الـ push:** فعّل صلاحية الكتابة:
+> GitHub → Settings → Actions → General → Workflow permissions → ✅ **Read and write permissions**

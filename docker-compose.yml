@@ -1,63 +1,34 @@
 version: "3.9"
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Claude Max Proxy
-#  ─────────────────────────────────────────────────────────────────────────────
-#  الخدمات:
-#    1. claude-auth   → Claude CLI لتسجيل الدخول (مرة وحدة)
-#    2. claude-proxy  → OpenAI-compatible API يتصل بـ claude.ai
+#  Claude Max Proxy – بناء محلي
+#  docker compose up -d --build
+#  ثم: docker exec -it claude-proxy claude   (لتسجيل الدخول مرة وحدة)
 # ══════════════════════════════════════════════════════════════════════════════
 
 services:
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # 1. Claude Auth – تسجيل الدخول عبر Claude CLI الرسمي
-  #    الاستخدام: docker exec -it claude-auth claude
-  # ──────────────────────────────────────────────────────────────────────────
-  claude-auth:
-    build:
-      context: ./claude-auth
-      dockerfile: Dockerfile
-    container_name: claude-auth
-    restart: unless-stopped
-    volumes:
-      - claude-credentials:/root/.claude
-    networks:
-      - proxy-net
-
-  # ──────────────────────────────────────────────────────────────────────────
-  # 2. Claude Proxy – OpenAI-compatible API
-  #    يقرأ OAuth token من الـ Volume ويتصل بـ claude.ai تلقائياً
-  # ──────────────────────────────────────────────────────────────────────────
   claude-proxy:
     build:
-      context: ./proxy
+      context: .
       dockerfile: Dockerfile
     container_name: claude-proxy
     restart: unless-stopped
-    depends_on:
-      - claude-auth
     environment:
       PROXY_API_KEY: ${PROXY_API_KEY:-proxy-key-change-me}
       CLAUDE_ORG_ID: ${CLAUDE_ORG_ID:-}
-      CLAUDE_CREDENTIALS_FILE: /root/.claude/credentials.json
       CLAUDE_SESSION_KEY: ${CLAUDE_SESSION_KEY:-}
+      CLAUDE_CREDENTIALS_FILE: /root/.claude/credentials.json
     volumes:
-      - claude-credentials:/root/.claude:ro
+      - claude-credentials:/root/.claude
     ports:
       - "${PROXY_PORT:-8080}:8080"
-    networks:
-      - proxy-net
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 15s
-
-networks:
-  proxy-net:
-    driver: bridge
 
 volumes:
   claude-credentials:

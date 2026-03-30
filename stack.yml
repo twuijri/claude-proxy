@@ -1,56 +1,33 @@
 version: "3.9"
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Claude Max Proxy – Stack File
-#  يستخدم الـ images الجاهزة من ghcr.io (لا يحتاج build محلي)
+#  Claude Max Proxy – Stack للـ Portainer (يسحب الـ image من ghcr.io)
 #
-#  الاستخدام:
-#    docker compose -f stack.yml up -d
+#  الاستخدام في Portainer:
+#    Stacks → Add Stack → Web editor → الصق هذا الملف كامل
 #
-#  أو في Portainer:
-#    Stacks → Add Stack → Web editor → الصق المحتوى
-#    أضف Environment Variables: PROXY_API_KEY, GITHUB_USERNAME
+#  Environment Variables المطلوبة:
+#    PROXY_API_KEY  ← مفتاحك الخاص (أي نص عشوائي)
+#
+#  بعد التشغيل – سجّل دخولك مرة وحدة:
+#    docker exec -it claude-proxy claude
 # ══════════════════════════════════════════════════════════════════════════════
 
 services:
 
-  # ──────────────────────────────────────────────────────────────────────────
-  # Claude Auth – تسجيل الدخول عبر Claude CLI
-  # بعد التشغيل: docker exec -it claude-auth claude
-  # ──────────────────────────────────────────────────────────────────────────
-  claude-auth:
-    image: ghcr.io/${GITHUB_USERNAME}/claude-auth:latest
-    container_name: claude-auth
-    restart: unless-stopped
-    volumes:
-      - claude-credentials:/root/.claude
-    networks:
-      - proxy-net
-
-  # ──────────────────────────────────────────────────────────────────────────
-  # Claude Proxy – OpenAI-compatible API
-  # ──────────────────────────────────────────────────────────────────────────
   claude-proxy:
-    image: ghcr.io/${GITHUB_USERNAME}/claude-proxy:latest
+    image: ghcr.io/twuijri/claude-proxy:latest
     container_name: claude-proxy
     restart: unless-stopped
-    depends_on:
-      - claude-auth
     environment:
       PROXY_API_KEY: ${PROXY_API_KEY:-proxy-key-change-me}
       CLAUDE_ORG_ID: ${CLAUDE_ORG_ID:-}
       CLAUDE_SESSION_KEY: ${CLAUDE_SESSION_KEY:-}
       CLAUDE_CREDENTIALS_FILE: /root/.claude/credentials.json
     volumes:
-      - claude-credentials:/root/.claude:ro
+      - claude-credentials:/root/.claude
     ports:
       - "${PROXY_PORT:-8080}:8080"
-    networks:
-      - proxy-net
-
-networks:
-  proxy-net:
-    driver: bridge
 
 volumes:
   claude-credentials:

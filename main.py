@@ -33,16 +33,23 @@ CLAUDE_SESSION_KEY_FALLBACK = os.environ.get("CLAUDE_SESSION_KEY", "")
 
 # Model mapping
 MODEL_MAP = {
-    "claude-max":        "claude-opus-4-5",
-    "claude-opus-4-5":   "claude-opus-4-5",
-    "claude-sonnet-4-5": "claude-sonnet-4-5",
-    "claude-haiku-4-5":  "claude-haiku-4-5",
-    "claude-3-5-sonnet": "claude-sonnet-4-5",
-    "claude-3-opus":     "claude-opus-4-5",
-    "gpt-4":             "claude-opus-4-5",
-    "gpt-3.5-turbo":     "claude-sonnet-4-5",
+    # ─── أحدث النماذج (4.6) ───────────────────────────────────
+    "claude-sonnet-4-6":      "claude-sonnet-4-6",
+    "claude-opus-4-6":        "claude-opus-4-6",
+    # ─── نماذج 4.5 ────────────────────────────────────────────
+    "claude-opus-4-5":        "claude-opus-4-5",
+    "claude-sonnet-4-5":      "claude-sonnet-4-5",
+    "claude-haiku-4-5":       "claude-haiku-4-5",
+    # ─── أسماء مختصرة / توافق مع الإصدارات القديمة ─────────
+    "claude-sonnet":          "claude-sonnet-4-6",
+    "claude-opus":            "claude-opus-4-6",
+    "claude-haiku":           "claude-haiku-4-5",
+    # ─── أسماء OpenAI (للتوافق) ───────────────────────────────
+    "gpt-4":                  "claude-opus-4-6",
+    "gpt-4o":                 "claude-sonnet-4-6",
+    "gpt-3.5-turbo":          "claude-sonnet-4-6",
 }
-DEFAULT_MODEL = "claude-sonnet-4-5"
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
 # ─── Credential Manager ───────────────────────────────────────────────────────
 class CredentialManager:
@@ -133,7 +140,7 @@ class Message(BaseModel):
     content: Union[str, List[dict]]
 
 class ChatRequest(BaseModel):
-    model: str = "claude-max"
+    model: str = "claude-sonnet-4-6"
     messages: List[Message]
     max_tokens: Optional[int] = 8096
     temperature: Optional[float] = 1.0
