@@ -138,12 +138,13 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
 
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
 
-    cmd = ["claude", "-p", full_prompt, "--model", model, "--dangerously-skip-permissions"]
+    cmd = ["claude", "-p", full_prompt, "--model", model]
     log.info(f"CLI → model={model}, prompt_len={len(full_prompt)}")
 
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
+            stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
