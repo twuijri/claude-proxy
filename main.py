@@ -24,9 +24,11 @@ PROXY_API_KEY        = os.environ.get("PROXY_API_KEY", "proxy-key-change-me")
 CLAUDE_ORG_ID        = os.environ.get("CLAUDE_ORG_ID", "")
 CLAUDE_BASE_URL      = "https://claude.ai/api"
 
-# مسار بيانات المصادقة – نفس المسار الذي يستخدمه Claude CLI
+# مسار بيانات المصادقة – Claude CLI يحفظها بنقطة في البداية
+CLAUDE_DIR = Path("/root/.claude")
+# يدعم كلا الاسمين: .credentials.json (الافتراضي الجديد) و credentials.json
 CLAUDE_CREDENTIALS_FILE = Path(
-    os.environ.get("CLAUDE_CREDENTIALS_FILE", "/root/.claude/credentials.json")
+    os.environ.get("CLAUDE_CREDENTIALS_FILE", "/root/.claude/.credentials.json")
 )
 # بديل: Session Key يدوي (إذا لم يُستخدم CLI)
 CLAUDE_SESSION_KEY_FALLBACK = os.environ.get("CLAUDE_SESSION_KEY", "")
@@ -61,18 +63,24 @@ class CredentialManager:
 
     @classmethod
     def _load_from_cli_file(cls) -> Optional[dict]:
-        """يقرأ ملف credentials.json الخاص بـ Claude CLI."""
-        if not CLAUDE_CREDENTIALS_FILE.exists():
-            return None
-        try:
-            data = json.loads(CLAUDE_CREDENTIALS_FILE.read_text())
-            # الهيكل: { "claudeAiOauth": { "accessToken": "...", "refreshToken": "...", ... } }
-            oauth = data.get("claudeAiOauth") or data.get("oauth") or data
-            if isinstance(oauth, dict) and oauth.get("accessToken"):
-                log.info("✅ تم تحميل OAuth token من Claude CLI credentials")
-                return oauth
-        except Exception as e:
-            log.warning(f"تعذّر قراءة credentials.json: {e}")
+        """يقرأ ملف credentials من Claude CLI – يجرب الاسمين المحتملين."""
+        # Claude CLI يحفظ الملف بنقطة أو بدونها حسب الإصدار
+        candidates = [
+            CLAUDE_CREDENTIALS_FILE,                          # من env أو الافتراضي
+            CLAUDE_DIR / ".credentials.json",                 # الاسم الجديد
+            CLAUDE_DIR / "credentials.json",                  # الاسم القديم
+        ]
+        for path in candidates:
+            if not path.exists():
+                continue
+            try:
+                data = json.loads(path.read_text())
+                oauth = data.get("claudeAiOauth") or data.get("oauth") or data
+                if isinstance(oauth, dict) and oauth.get("accessToken"):
+                    log.info(f"✅ تم تحميل OAuth token من: {path}")
+                    return oauth
+            except Exception as e:
+                log.warning(f"تعذّر قراءة {path}: {e}")
         return None
 
     @classmethod
@@ -276,9 +284,9 @@ async def root():
         "service": "Claude Max Proxy",
         "version": "2.0.0",
         "authenticated": authenticated,
-        "auth_source": "claude-cli" if CLAUDE_CREDENTIALS_FILE.exists() else
+        "auth_source": "claude-cli" if any(p.exists() for p in [CLAUDE_DIR/".credentials.json", CLAUDE_DIR/"credentials.json"]) else
                        "env-session-key" if CLAUDE_SESSION_KEY_FALLBACK else "none",
-        "hint": None if authenticated else "شغّل: docker exec -it claude-auth claude"
+        "hint": None if authenticated else "شغّل: docker exec -it claude-proxy claude"
     }
 
 @app.get("/health")
