@@ -583,23 +583,26 @@ async def ui_submit_code(request: Request):
 
     os.write(_auth_master_fd, (code + "\r").encode())
 
-    try:
-        await asyncio.wait_for(_auth_proc.wait(), timeout=90)
-    except asyncio.TimeoutError:
-        try:
-            os.close(_auth_master_fd)
-        except OSError:
-            pass
-        _auth_proc      = None
-        _auth_url       = None
-        _auth_master_fd = None
-        raise HTTPException(status_code=504, detail="انتهت المهلة")
+    # Poll every 2s for up to 90s — succeed as soon as credentials appear on disk
+    success = False
+    for _ in range(45):
+        await asyncio.sleep(2)
+        if is_authenticated():
+            success = True
+            break
+        if _auth_proc.returncode is not None:
+            success = _auth_proc.returncode == 0
+            break
 
     try:
         os.close(_auth_master_fd)
     except OSError:
         pass
-    success = _auth_proc.returncode == 0
+    if _auth_proc.returncode is None:
+        try:
+            _auth_proc.kill()
+        except Exception:
+            pass
     _auth_proc      = None
     _auth_url       = None
     _auth_master_fd = None
