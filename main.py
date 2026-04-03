@@ -152,12 +152,15 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
     cmd = ["claude", "--dangerously-skip-permissions", "-p", full_prompt, "--model", model]
     log.info(f"CLI → model={model}, prompt_len={len(full_prompt)}")
 
+    env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
+
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
             stdin=asyncio.subprocess.DEVNULL,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            env=env,
         )
         stdout, stderr = await asyncio.wait_for(
             process.communicate(),
@@ -490,12 +493,15 @@ async def ui_start_login():
     # نفتح pseudo-TTY علشان الـ claude CLI يعتقد إنه في terminal
     master_fd, slave_fd = pty.openpty()
 
+    env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
+
     _auth_proc = await asyncio.create_subprocess_exec(
         "claude",
         stdin=slave_fd,
         stdout=slave_fd,
         stderr=slave_fd,
         preexec_fn=os.setsid,
+        env=env,
     )
     os.close(slave_fd)
     _auth_master_fd = master_fd
