@@ -16,11 +16,12 @@ services:
     restart: unless-stopped
     environment:
       PROXY_API_KEY: ${PROXY_API_KEY:-proxy-key-change-me}
+      UI_PASSWORD: ${UI_PASSWORD:-admin}
       CLAUDE_ORG_ID: ${CLAUDE_ORG_ID:-}
       CLAUDE_SESSION_KEY: ${CLAUDE_SESSION_KEY:-}
-      CLAUDE_CREDENTIALS_FILE: /root/.claude/credentials.json
+      CLAUDE_CREDENTIALS_FILE: /home/claude/.claude/credentials.json
     volumes:
-      - claude-credentials:/root/.claude
+      - claude-credentials:/home/claude/.claude
     ports:
       - "${PROXY_PORT:-8080}:8080"
     healthcheck:

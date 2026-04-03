@@ -26,8 +26,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # ── 4. نسخ الكود
 COPY main.py .
 
-# ── 5. مجلد credentials
-RUN mkdir -p /root/.claude
+# ── 5. إنشاء مستخدم غير root (لأن --dangerously-skip-permissions محظور على root)
+RUN useradd -m -s /bin/bash claude \
+    && mkdir -p /home/claude/.claude \
+    && chown -R claude:claude /home/claude /app
 
 # ── 6. إعداد supervisord
 COPY supervisord.conf /etc/supervisor/conf.d/claude-proxy.conf
