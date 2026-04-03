@@ -34,9 +34,13 @@ RUN useradd -m -s /bin/bash claude \
 # ── 6. إعداد supervisord
 COPY supervisord.conf /etc/supervisor/conf.d/claude-proxy.conf
 
+# ── 7. entrypoint لإصلاح صلاحيات الـ volume
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 EXPOSE 8080
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
   CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/health')"
 
-CMD ["/usr/bin/supervisord", "-n", "-c", "/etc/supervisor/supervisord.conf"]
+CMD ["/entrypoint.sh"]
