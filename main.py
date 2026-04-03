@@ -415,22 +415,39 @@ async function startLogin(){
   }
 }
 
+function copyToClipboard(text, onSuccess){
+  if(navigator.clipboard && navigator.clipboard.writeText){
+    navigator.clipboard.writeText(text).then(onSuccess).catch(()=>fallbackCopy(text,onSuccess));
+  } else {
+    fallbackCopy(text, onSuccess);
+  }
+}
+function fallbackCopy(text, onSuccess){
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta);
+  ta.focus(); ta.select();
+  try{ document.execCommand('copy'); onSuccess(); }catch(e){}
+  document.body.removeChild(ta);
+}
+
 function showOAuth(url){
   document.getElementById('sec-btn').style.display='none';
   document.getElementById('sec-oauth').style.display='block';
   const b = document.getElementById('url-box');
   b.textContent = url;
   b.dataset.url = url;
-  navigator.clipboard.writeText(url).then(()=>{
+  copyToClipboard(url, ()=>{
     b.textContent = '✓ تم النسخ — ' + url;
     setTimeout(()=>{ b.textContent = url; }, 2500);
-  }).catch(()=>{});
+  });
 }
 
 function copyUrl(){
   const url = document.getElementById('url-box').dataset.url;
-  navigator.clipboard.writeText(url).then(()=>{
-    const b = document.getElementById('url-box');
+  const b = document.getElementById('url-box');
+  copyToClipboard(url, ()=>{
     b.textContent='تم النسخ ✓';
     setTimeout(()=>{ b.textContent=url; }, 2000);
   });
