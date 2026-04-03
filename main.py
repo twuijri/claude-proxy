@@ -510,10 +510,11 @@ async def ui_start_login():
     fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
-    url_re   = re.compile(r"https://claude\.com/cai/oauth/authorize\S+")
-    output   = b""
-    deadline = asyncio.get_event_loop().time() + 60
-    theme_sent = False
+    url_re      = re.compile(r"https://claude\.com/cai/oauth/authorize\S+")
+    output      = b""
+    deadline    = asyncio.get_event_loop().time() + 60
+    theme_sent  = False
+    login_sent  = False
 
     while asyncio.get_event_loop().time() < deadline:
         try:
@@ -528,6 +529,12 @@ async def ui_start_login():
                     theme_sent = True
                     os.write(master_fd, b"\r")
                     log.info("Auth: auto-selected theme (Enter)")
+
+                # اختيار "Claude account" تلقائياً (شاشة login method)
+                if not login_sent and b"Select" in output and b"login" in output:
+                    login_sent = True
+                    os.write(master_fd, b"\r")
+                    log.info("Auth: auto-selected login method 1 (Claude account)")
 
                 m = url_re.search(decoded)
                 if m:
