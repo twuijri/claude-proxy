@@ -500,6 +500,10 @@ async def ui_start_login():
     # نفتح pseudo-TTY علشان الـ claude CLI يعتقد إنه في terminal
     master_fd, slave_fd = pty.openpty()
 
+    # Set wide terminal BEFORE starting subprocess so Claude CLI reads correct size at startup
+    # 600 cols fits the ~450-char OAuth URL on one line without excess padding
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 600, 0, 0))
+
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
 
     _auth_proc = await asyncio.create_subprocess_exec(
@@ -512,9 +516,6 @@ async def ui_start_login():
     )
     os.close(slave_fd)
     _auth_master_fd = master_fd
-
-    # Set very wide terminal so OAuth URL doesn't wrap (URL can be 450+ chars)
-    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 4096, 0, 0))
 
     # non-blocking read
     fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
