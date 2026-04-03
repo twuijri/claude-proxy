@@ -525,9 +525,8 @@ async def ui_start_login():
 
                 # اختيار الـ theme تلقائياً (شاشة الإعداد الأولى)
                 if not theme_sent and b"Choose" in output:
-                    await asyncio.sleep(0.3)
-                    os.write(master_fd, b"\n")
                     theme_sent = True
+                    os.write(master_fd, b"\r")
                     log.info("Auth: auto-selected theme (Enter)")
 
                 m = url_re.search(decoded)
