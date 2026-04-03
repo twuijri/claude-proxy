@@ -1,5 +1,7 @@
 import os
 import re
+import pty
+import fcntl
 import json
 import uuid
 import time
@@ -25,8 +27,9 @@ UI_PASSWORD   = os.environ.get("UI_PASSWORD", "admin")
 CLAUDE_DIR    = Path("/home/claude/.claude")
 
 # ─── Auth Flow State ──────────────────────────────────────────────────────────
-_auth_proc: Optional[asyncio.subprocess.Process] = None
-_auth_url:  Optional[str] = None
+_auth_proc:      Optional[asyncio.subprocess.Process] = None
+_auth_url:       Optional[str] = None
+_auth_master_fd: Optional[int] = None
 
 # ─── Model Mapping ───────────────────────────────────────────────────────────
 MODEL_MAP = {
@@ -481,45 +484,58 @@ async def ui_status():
 
 @app.post("/ui/start-login", dependencies=[Depends(verify_ui)])
 async def ui_start_login():
-    global _auth_proc, _auth_url
+    global _auth_proc, _auth_url, _auth_master_fd
     _auth_url = None
+
+    # نفتح pseudo-TTY علشان الـ claude CLI يعتقد إنه في terminal
+    master_fd, slave_fd = pty.openpty()
 
     _auth_proc = await asyncio.create_subprocess_exec(
         "claude",
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=slave_fd,
+        preexec_fn=os.setsid,
     )
+    os.close(slave_fd)
+    _auth_master_fd = master_fd
+
+    # non-blocking read
+    fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+    fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
     url_re = re.compile(r"https://claude\.com/cai/oauth/authorize\S+")
     output = b""
     deadline = asyncio.get_event_loop().time() + 30
 
     while asyncio.get_event_loop().time() < deadline:
-        remaining = deadline - asyncio.get_event_loop().time()
         try:
-            chunk = await asyncio.wait_for(
-                _auth_proc.stdout.read(1024), timeout=min(remaining, 2.0)
-            )
-        except asyncio.TimeoutError:
-            continue
-        if not chunk:  # EOF
+            chunk = os.read(master_fd, 1024)
+            if chunk:
+                output += chunk
+                log.info(f"Auth pty output: {chunk!r}")
+                m = url_re.search(output.decode(errors="replace"))
+                if m:
+                    _auth_url = m.group(0).rstrip(")")
+                    return {"url": _auth_url}
+        except BlockingIOError:
+            await asyncio.sleep(0.2)
+        except OSError:
             break
-        output += chunk
-        log.info(f"Auth output: {chunk!r}")
-        m = url_re.search(output.decode(errors="replace"))
-        if m:
-            _auth_url = m.group(0).rstrip(")")
-            return {"url": _auth_url}
 
     decoded = output.decode(errors="replace")
     log.warning(f"Auth: no URL found. Full output: {decoded!r}")
+    try:
+        os.close(master_fd)
+    except OSError:
+        pass
+    _auth_master_fd = None
     _auth_proc = None
     raise HTTPException(status_code=500, detail=f"لم يتم العثور على رابط OAuth — output: {decoded[:300]}")
 
 @app.post("/ui/submit-code", dependencies=[Depends(verify_ui)])
 async def ui_submit_code(request: Request):
-    global _auth_proc, _auth_url
+    global _auth_proc, _auth_url, _auth_master_fd
     body = await request.json()
     code = body.get("code", "").strip()
     if not code:
@@ -527,26 +543,36 @@ async def ui_submit_code(request: Request):
     if not _auth_proc or _auth_proc.returncode is not None:
         raise HTTPException(status_code=400, detail="لا توجد جلسة مصادقة نشطة")
 
-    _auth_proc.stdin.write((code + "\n").encode())
-    await _auth_proc.stdin.drain()
+    os.write(_auth_master_fd, (code + "\n").encode())
 
     try:
         await asyncio.wait_for(_auth_proc.wait(), timeout=30)
     except asyncio.TimeoutError:
         raise HTTPException(status_code=504, detail="انتهت المهلة")
 
+    try:
+        os.close(_auth_master_fd)
+    except OSError:
+        pass
     success = _auth_proc.returncode == 0
-    _auth_proc = None
-    _auth_url  = None
+    _auth_proc      = None
+    _auth_url       = None
+    _auth_master_fd = None
     return {"success": success, "authenticated": is_authenticated()}
 
 @app.post("/ui/cancel-auth", dependencies=[Depends(verify_ui)])
 async def ui_cancel_auth():
-    global _auth_proc, _auth_url
+    global _auth_proc, _auth_url, _auth_master_fd
     if _auth_proc and _auth_proc.returncode is None:
         _auth_proc.kill()
-    _auth_proc = None
-    _auth_url  = None
+    if _auth_master_fd is not None:
+        try:
+            os.close(_auth_master_fd)
+        except OSError:
+            pass
+    _auth_proc      = None
+    _auth_url       = None
+    _auth_master_fd = None
     return {"cancelled": True}
 
 
