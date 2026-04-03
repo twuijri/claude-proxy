@@ -24,6 +24,8 @@ services:
       - claude-credentials:/home/claude/.claude
     ports:
       - "${PROXY_PORT:-8080}:8080"
+    networks:
+      - npm_default
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/health')\""]
       interval: 30s
@@ -33,3 +35,7 @@ services:
 
 volumes:
   claude-credentials:
+
+networks:
+  npm_default:
+    external: true
