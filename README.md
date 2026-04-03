@@ -1,33 +1,13 @@
-# 🤖 Claude Max Proxy
+# Claude Max Proxy
 
-> Container واحد يجمع **Claude CLI** + **OpenAI-compatible API**  
-> سجّل دخولك مرة وحدة، وابدأ تستخدم Claude Max من أي تطبيق يدعم OpenAI API
+بروكسي يحول حساب Claude Max إلى API متوافق مع OpenAI.  
+سجّل دخولك مرة وحدة من الواجهة، وابدأ تستخدمه من أي تطبيق.
 
 [![Build & Push](https://github.com/twuijri/claude-proxy/actions/workflows/build.yml/badge.svg)](https://github.com/twuijri/claude-proxy/actions/workflows/build.yml)
 
 ---
 
-## 🏗️ كيف يعمل
-
-```
-docker exec -it claude-proxy claude   ← تسجيل الدخول (مرة وحدة)
-                  │
-                  ▼
-         /root/.claude/credentials.json  (داخل الـ volume)
-                  │
-                  ▼
-         FastAPI :8080  ←  LiteLLM / OpenWebUI / أي تطبيق
-```
-
----
-
-## 🚀 طريقة 1 – Portainer (الأسهل)
-
-```
-Stacks → Add Stack → Web editor
-```
-
-الصق هذا كامل:
+## التشغيل السريع (Portainer Stack)
 
 ```yaml
 version: "3.9"
@@ -38,150 +18,95 @@ services:
     container_name: claude-proxy
     restart: unless-stopped
     environment:
-      PROXY_API_KEY: ${PROXY_API_KEY:-proxy-key-change-me}
-      CLAUDE_ORG_ID: ${CLAUDE_ORG_ID:-}
-      CLAUDE_CREDENTIALS_FILE: /root/.claude/credentials.json
+      PROXY_API_KEY: your-secret-key
+      UI_PASSWORD: your-ui-password
     volumes:
-      - claude-credentials:/root/.claude
+      - claude-credentials:/home/claude/.claude
     ports:
-      - "${PROXY_PORT:-8080}:8080"
+      - "8080:8080"
+    networks:
+      - npm_default
 
 volumes:
   claude-credentials:
+
+networks:
+  npm_default:
+    external: true
 ```
 
-أضف في **Environment Variables** في Portainer:
-
-| Variable | Value |
-|---|---|
-| `PROXY_API_KEY` | اختر مفتاح عشوائي (مثال: `mysecretkey123`) |
-| `PROXY_PORT` | `8080` (اختياري) |
+> إذا ما تستخدم Nginx Proxy Manager، احذف سطري `networks` من الملف.
 
 ---
 
-## 🚀 طريقة 2 – docker compose (بناء محلي)
+## تسجيل الدخول
 
-```bash
-# 1. استنسخ المشروع
-git clone https://github.com/twuijri/claude-proxy.git
-cd claude-proxy
+بعد تشغيل الـ container، افتح الواجهة:
 
-# 2. إعداد البيئة
-cp .env.example .env
-nano .env   # عدّل PROXY_API_KEY
-
-# 3. بناء وتشغيل
-docker compose up -d --build
 ```
+http://YOUR_SERVER_IP:8080/ui
+```
+
+1. أدخل `UI_PASSWORD` التي حددتها
+2. اضغط **تسجيل الدخول بـ Claude**
+3. افتح الرابط الذي يظهر، وافق، وانسخ الكود
+4. الصق الكود في الخانة واضغط تأكيد
+
+الـ credentials تُحفظ في الـ volume وتبقى حتى لو أعدت تشغيل الـ container.
 
 ---
 
-## 🔐 تسجيل الدخول (مرة وحدة)
-
-بعد تشغيل الـ container:
-
-```bash
-docker exec -it claude-proxy claude
-```
-
-سيظهر لك رابط – افتحه في المتصفح وسجّل دخولك بحساب Claude Max.  
-بعد النجاح، الـ API يشتغل تلقائياً بدون restart.
-
-> **الـ credentials محفوظة في Volume** – تبقى حتى لو حذفت الـ container وأعدت تشغيله.
-
-### التحقق من الاتصال:
-
-```bash
-curl http://YOUR_SERVER_IP:8080/
-```
-
-الرد المتوقع بعد تسجيل الدخول:
-```json
-{
-  "service": "Claude Max Proxy",
-  "authenticated": true,
-  "auth_source": "claude-cli"
-}
-```
-
----
-
-## 🔗 إضافته في LiteLLM
-
-في `litellm-config.yaml`:
+## الربط مع LiteLLM
 
 ```yaml
 model_list:
   - model_name: claude-sonnet-4-6
     litellm_params:
       model: anthropic/claude-sonnet-4-6
-      api_base: http://YOUR_SERVER_IP:8080/v1
-      api_key: YOUR_PROXY_API_KEY
+      api_base: http://claude-proxy:8080/v1
+      api_key: your-secret-key
 
   - model_name: claude-opus-4-6
     litellm_params:
       model: anthropic/claude-opus-4-6
-      api_base: http://YOUR_SERVER_IP:8080/v1
-      api_key: YOUR_PROXY_API_KEY
+      api_base: http://claude-proxy:8080/v1
+      api_key: your-secret-key
 ```
 
-> إذا LiteLLM على **نفس السيرفر** ← `http://localhost:8080/v1`
+> إذا LiteLLM على نفس الشبكة (`npm_default`) استخدم اسم الـ container مباشرة بدل IP.
 
 ---
 
-## 🛡️ النماذج المتاحة
-
-| Model Name | الموديل |
-|---|---|
-| `claude-sonnet-4-6` | ✅ الافتراضي – الأحدث |
-| `claude-opus-4-6` | الأقوى |
-| `claude-sonnet-4-5` | جيل سابق |
-| `claude-opus-4-5` | جيل سابق |
-| `claude-haiku-4-5` | الأسرع |
-| `claude-sonnet` | → claude-sonnet-4-6 |
-| `claude-opus` | → claude-opus-4-6 |
-| `gpt-4` | → claude-opus-4-6 |
-| `gpt-4o` | → claude-sonnet-4-6 |
-
----
-
-## 📡 Endpoints
-
-| Endpoint | الوصف |
-|---|---|
-| `GET /` | الحالة العامة + حالة المصادقة |
-| `GET /health` | health check |
-| `POST /auth/refresh` | إعادة تحميل الـ token بدون restart |
-| `GET /v1/models` | قائمة النماذج |
-| `POST /v1/chat/completions` | OpenAI-compatible chat |
-
----
-
-## 🔄 تجديد المصادقة (إذا انتهت الجلسة)
+## اختبار الاتصال
 
 ```bash
-docker exec -it claude-proxy claude logout
-docker exec -it claude-proxy claude
-curl -X POST http://YOUR_SERVER_IP:8080/auth/refresh
+curl http://YOUR_SERVER_IP:8080/health
 ```
-
----
-
-## 🧪 اختبار سريع
 
 ```bash
 curl http://YOUR_SERVER_IP:8080/v1/chat/completions \
-  -H "Authorization: Bearer YOUR_PROXY_API_KEY" \
+  -H "Authorization: Bearer your-secret-key" \
   -H "Content-Type: application/json" \
-  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"مرحبا!"}]}'
+  -d '{"model":"claude-sonnet-4-6","messages":[{"role":"user","content":"مرحبا"}]}'
 ```
 
 ---
 
-## 🐙 GitHub Actions
+## النماذج المتاحة
 
-عند كل push على `main` يبني تلقائياً:
-- `ghcr.io/twuijri/claude-proxy:latest` (amd64 + arm64)
+| الاسم | يُوجَّه إلى |
+|---|---|
+| `claude-sonnet-4-6` | claude-sonnet-4-6 (الافتراضي) |
+| `claude-opus-4-6` | claude-opus-4-6 |
+| `claude-haiku-4-5` | claude-haiku-4-5 |
+| `gpt-4o` | claude-sonnet-4-6 |
+| `gpt-4` | claude-opus-4-6 |
 
-**قبل الـ push:** فعّل صلاحية الكتابة:
-> GitHub → Settings → Actions → General → Workflow permissions → ✅ **Read and write permissions**
+---
+
+## المتغيرات
+
+| المتغير | الوصف | الافتراضي |
+|---|---|---|
+| `PROXY_API_KEY` | مفتاح الـ API للتطبيقات | `proxy-key-change-me` |
+| `UI_PASSWORD` | كلمة مرور واجهة الويب | `admin` |
