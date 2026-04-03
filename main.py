@@ -524,10 +524,11 @@ async def ui_start_login():
                 log.info(f"Auth pty output: {chunk!r}")
 
                 # اختيار الـ theme تلقائياً (شاشة الإعداد الأولى)
-                if not theme_sent and "Choose the text style" in decoded:
-                    os.write(master_fd, b"1\n")
+                if not theme_sent and b"Choose" in output:
+                    await asyncio.sleep(0.3)
+                    os.write(master_fd, b"\n")
                     theme_sent = True
-                    log.info("Auth: auto-selected theme 1")
+                    log.info("Auth: auto-selected theme (Enter)")
 
                 m = url_re.search(decoded)
                 if m:
