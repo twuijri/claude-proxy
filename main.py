@@ -60,7 +60,7 @@ def is_authenticated() -> bool:
 
 def restore_claude_config():
     """يسترجع ملف الإعدادات من النسخة الاحتياطية إذا كان مفقوداً."""
-    config = Path("/root/.claude.json")
+    config = Path("/home/claude/.claude.json")
     if config.exists():
         return
     backups_dir = CLAUDE_DIR / "backups"
