@@ -418,8 +418,13 @@ async function startLogin(){
 function showOAuth(url){
   document.getElementById('sec-btn').style.display='none';
   document.getElementById('sec-oauth').style.display='block';
-  document.getElementById('url-box').textContent = url;
-  document.getElementById('url-box').dataset.url = url;
+  const b = document.getElementById('url-box');
+  b.textContent = url;
+  b.dataset.url = url;
+  navigator.clipboard.writeText(url).then(()=>{
+    b.textContent = '✓ تم النسخ — ' + url;
+    setTimeout(()=>{ b.textContent = url; }, 2500);
+  }).catch(()=>{});
 }
 
 function copyUrl(){
@@ -508,14 +513,15 @@ async def ui_start_login():
     os.close(slave_fd)
     _auth_master_fd = master_fd
 
-    # Set wide terminal so OAuth URL doesn't wrap across multiple lines
-    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 220, 0, 0))
+    # Set very wide terminal so OAuth URL doesn't wrap (URL can be 450+ chars)
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 4096, 0, 0))
 
     # non-blocking read
     fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
     url_re      = re.compile(r"https://claude\.com/cai/oauth/authorize\S+")
+    ansi_re     = re.compile(r'\x1b\[[^a-zA-Z]*[a-zA-Z]|\x1b[^[]')
     output      = b""
     deadline    = asyncio.get_event_loop().time() + 60
     theme_sent  = False
@@ -541,7 +547,11 @@ async def ui_start_login():
                     os.write(master_fd, b"\r")
                     log.info("Auth: auto-selected login method 1 (Claude account)")
 
-                m = url_re.search(decoded)
+                # Strip ANSI codes and rejoin URL fragments split by line-wrap
+                clean = ansi_re.sub('', decoded)
+                clean = re.sub(r'(https://\S+)\r\r\n(\S)', r'\1\2', clean)
+                clean = re.sub(r'(https://\S+)\r\r\n(\S)', r'\1\2', clean)
+                m = url_re.search(clean)
                 if m:
                     _auth_url = m.group(0).rstrip(")")
                     return {"url": _auth_url}
