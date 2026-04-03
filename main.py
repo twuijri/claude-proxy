@@ -2,6 +2,8 @@ import os
 import re
 import pty
 import fcntl
+import struct
+import termios
 import json
 import uuid
 import time
@@ -505,6 +507,9 @@ async def ui_start_login():
     )
     os.close(slave_fd)
     _auth_master_fd = master_fd
+
+    # Set wide terminal so OAuth URL doesn't wrap across multiple lines
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HHHH', 50, 220, 0, 0))
 
     # non-blocking read
     fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
