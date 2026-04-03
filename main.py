@@ -496,22 +496,26 @@ async def ui_start_login():
     deadline = asyncio.get_event_loop().time() + 30
 
     while asyncio.get_event_loop().time() < deadline:
-        if _auth_proc.returncode is not None:
-            break
+        remaining = deadline - asyncio.get_event_loop().time()
         try:
-            chunk = await asyncio.wait_for(_auth_proc.stdout.read(512), timeout=1.0)
+            chunk = await asyncio.wait_for(
+                _auth_proc.stdout.read(1024), timeout=min(remaining, 2.0)
+            )
         except asyncio.TimeoutError:
             continue
-        if not chunk:
+        if not chunk:  # EOF
             break
         output += chunk
+        log.info(f"Auth output: {chunk!r}")
         m = url_re.search(output.decode(errors="replace"))
         if m:
             _auth_url = m.group(0).rstrip(")")
             return {"url": _auth_url}
 
+    decoded = output.decode(errors="replace")
+    log.warning(f"Auth: no URL found. Full output: {decoded!r}")
     _auth_proc = None
-    raise HTTPException(status_code=500, detail="لم يتم العثور على رابط OAuth")
+    raise HTTPException(status_code=500, detail=f"لم يتم العثور على رابط OAuth — output: {decoded[:300]}")
 
 @app.post("/ui/submit-code", dependencies=[Depends(verify_ui)])
 async def ui_submit_code(request: Request):
