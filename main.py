@@ -510,17 +510,26 @@ async def ui_start_login():
     fl = fcntl.fcntl(master_fd, fcntl.F_GETFL)
     fcntl.fcntl(master_fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
 
-    url_re = re.compile(r"https://claude\.com/cai/oauth/authorize\S+")
-    output = b""
-    deadline = asyncio.get_event_loop().time() + 30
+    url_re   = re.compile(r"https://claude\.com/cai/oauth/authorize\S+")
+    output   = b""
+    deadline = asyncio.get_event_loop().time() + 60
+    theme_sent = False
 
     while asyncio.get_event_loop().time() < deadline:
         try:
             chunk = os.read(master_fd, 1024)
             if chunk:
                 output += chunk
+                decoded = output.decode(errors="replace")
                 log.info(f"Auth pty output: {chunk!r}")
-                m = url_re.search(output.decode(errors="replace"))
+
+                # اختيار الـ theme تلقائياً (شاشة الإعداد الأولى)
+                if not theme_sent and "Choose the text style" in decoded:
+                    os.write(master_fd, b"1\n")
+                    theme_sent = True
+                    log.info("Auth: auto-selected theme 1")
+
+                m = url_re.search(decoded)
                 if m:
                     _auth_url = m.group(0).rstrip(")")
                     return {"url": _auth_url}
