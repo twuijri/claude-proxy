@@ -581,11 +581,18 @@ async def ui_submit_code(request: Request):
     if not _auth_proc or _auth_proc.returncode is not None:
         raise HTTPException(status_code=400, detail="لا توجد جلسة مصادقة نشطة")
 
-    os.write(_auth_master_fd, (code + "\n").encode())
+    os.write(_auth_master_fd, (code + "\r").encode())
 
     try:
-        await asyncio.wait_for(_auth_proc.wait(), timeout=30)
+        await asyncio.wait_for(_auth_proc.wait(), timeout=90)
     except asyncio.TimeoutError:
+        try:
+            os.close(_auth_master_fd)
+        except OSError:
+            pass
+        _auth_proc      = None
+        _auth_url       = None
+        _auth_master_fd = None
         raise HTTPException(status_code=504, detail="انتهت المهلة")
 
     try:
