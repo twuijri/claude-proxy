@@ -10,7 +10,7 @@ import time
 import asyncio
 import logging
 from pathlib import Path
-from typing import Optional, Union, List, AsyncIterator
+from typing import Any, Optional, Union, List, AsyncIterator
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -106,6 +106,8 @@ class ChatRequest(BaseModel):
     temperature: Optional[float] = 1.0
     stream: Optional[bool] = False
     system: Optional[str] = None
+    tools: Optional[List[Any]] = None
+    tool_choice: Optional[Any] = None
 
 # ─── Auth Middleware ──────────────────────────────────────────────────────────
 async def verify_api_key(request: Request):
@@ -137,6 +139,36 @@ def build_prompt(req: ChatRequest) -> tuple[str, str]:
             parts.append(f"Tool result: {content}")
 
     return system, "\n\n".join(parts)
+
+# ─── Tool Call Helpers ───────────────────────────────────────────────────────
+def build_tools_prompt(tools: List[Any]) -> str:
+    """يحول قائمة الأدوات إلى تعليمات في الـ system prompt."""
+    tools_json = json.dumps(tools, ensure_ascii=False, indent=2)
+    return (
+        "You have access to tools. When you need to call a tool, respond with ONLY valid JSON "
+        "in this exact format (no other text before or after):\n"
+        '{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"TOOL_NAME","arguments":{"KEY":"VALUE"}}}]}\n\n'
+        f"Available tools:\n{tools_json}"
+    )
+
+def parse_tool_calls(text: str) -> Optional[List[dict]]:
+    """يحاول تحليل رد Claude كـ tool call JSON."""
+    text = text.strip()
+    # ابحث عن JSON سواء كان الرد كله أو داخل code block
+    for candidate in [text, re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)]:
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict) and "tool_calls" in data:
+                calls = data["tool_calls"]
+                # تأكد أن arguments نص JSON وليس dict
+                for call in calls:
+                    args = call.get("function", {}).get("arguments", {})
+                    if isinstance(args, dict):
+                        call["function"]["arguments"] = json.dumps(args, ensure_ascii=False)
+                return calls
+        except Exception:
+            pass
+    return None
 
 # ─── Claude CLI Runner ───────────────────────────────────────────────────────
 async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int = 120) -> str:
@@ -253,9 +285,13 @@ async def list_models():
 @app.post("/v1/chat/completions", dependencies=[Depends(verify_api_key)])
 async def chat_completions(req: ChatRequest):
     model = MODEL_MAP.get(req.model, DEFAULT_MODEL)
-    log.info(f"Request → {req.model} → {model}, stream={req.stream}, msgs={len(req.messages)}")
+    log.info(f"Request → {req.model} → {model}, stream={req.stream}, msgs={len(req.messages)}, tools={len(req.tools or [])}")
 
     system, prompt = build_prompt(req)
+
+    if req.tools:
+        tools_instruction = build_tools_prompt(req.tools)
+        system = f"{tools_instruction}\n\n{system}" if system else tools_instruction
 
     if req.stream:
         return StreamingResponse(
@@ -265,8 +301,22 @@ async def chat_completions(req: ChatRequest):
 
     # Non-streaming
     text = await run_claude_cli(prompt, model, system)
-    words = len(text.split())
 
+    # كشف tool call في الرد
+    if req.tools:
+        tool_calls = parse_tool_calls(text)
+        if tool_calls:
+            log.info(f"Tool call detected: {[c['function']['name'] for c in tool_calls]}")
+            return JSONResponse({
+                "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": model,
+                "choices": [{"index": 0, "message": {"role": "assistant", "content": None, "tool_calls": tool_calls}, "finish_reason": "tool_calls"}],
+                "usage": {"prompt_tokens": -1, "completion_tokens": -1, "total_tokens": -1},
+            })
+
+    words = len(text.split())
     return JSONResponse({
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
         "object": "chat.completion",
