@@ -96,10 +96,12 @@ app.add_middleware(
 
 # ─── Pydantic Models ─────────────────────────────────────────────────────────
 class Message(BaseModel):
+    model_config = {"extra": "allow"}
     role: str
-    content: Union[str, List[dict]]
+    content: Union[str, List[dict], None] = None
 
 class ChatRequest(BaseModel):
+    model_config = {"extra": "allow"}
     model: str = DEFAULT_MODEL
     messages: List[Message]
     max_tokens: Optional[int] = 8096
