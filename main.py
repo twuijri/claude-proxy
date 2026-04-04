@@ -154,13 +154,18 @@ def build_tools_prompt(tools: List[Any]) -> str:
 def parse_tool_calls(text: str) -> Optional[List[dict]]:
     """يحاول تحليل رد Claude كـ tool call JSON."""
     text = text.strip()
-    # ابحث عن JSON سواء كان الرد كله أو داخل code block
-    for candidate in [text, re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)]:
+    # جمّع كل المحاولات: النص الكامل، بدون code block، واستخراج JSON من وسط النص
+    candidates = [text, re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.S)]
+    # ابحث عن {"tool_calls": داخل النص (لو Claude أضاف نص حوله)
+    m = re.search(r'(\{"tool_calls"\s*:\s*\[.*\])\s*\}', text, re.S)
+    if m:
+        candidates.append(m.group(0))
+
+    for candidate in candidates:
         try:
-            data = json.loads(candidate)
+            data = json.loads(candidate.strip())
             if isinstance(data, dict) and "tool_calls" in data:
                 calls = data["tool_calls"]
-                # تأكد أن arguments نص JSON وليس dict
                 for call in calls:
                     args = call.get("function", {}).get("arguments", {})
                     if isinstance(args, dict):
@@ -300,6 +305,9 @@ async def chat_completions(req: ChatRequest):
 
     # كشف tool call في الرد
     tool_calls = parse_tool_calls(text) if req.tools else None
+    if req.tools:
+        log.info(f"CLI response (first 300 chars): {text[:300]}")
+        log.info(f"Tool calls parsed: {tool_calls is not None}")
 
     if tool_calls:
         log.info(f"Tool call detected: {[c['function']['name'] for c in tool_calls]}")
