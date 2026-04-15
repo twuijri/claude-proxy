@@ -129,8 +129,12 @@ def build_prompt(req: ChatRequest) -> tuple[str, str]:
     parts = []
 
     for msg in req.messages:
-        content = msg.content if isinstance(msg.content, str) \
-                  else " ".join(p.get("text", "") for p in msg.content if isinstance(p, dict))
+        if isinstance(msg.content, str):
+            content = msg.content
+        elif isinstance(msg.content, list):
+            content = " ".join(p.get("text", "") for p in msg.content if isinstance(p, dict))
+        else:
+            content = ""
         if msg.role == "system":
             system += ("\n" if system else "") + content
         elif msg.role == "user":
@@ -178,7 +182,7 @@ def parse_tool_calls(text: str) -> Optional[List[dict]]:
     return None
 
 # ─── Claude CLI Runner ───────────────────────────────────────────────────────
-async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int = 120) -> str:
+async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int = 300) -> str:
     """
     يشغّل `claude -p "..."` كـ subprocess ويرجع الرد كاملاً.
     """
@@ -190,7 +194,8 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
 
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
 
-    cmd = ["claude", "--dangerously-skip-permissions", "-p", full_prompt, "--model", model]
+    # نرسل الـ prompt عبر stdin لتجنب "Argument list too long" مع الـ prompts الطويلة
+    cmd = ["claude", "--dangerously-skip-permissions", "-p", "--model", model]
     log.info(f"CLI → model={model}, prompt_len={len(full_prompt)}")
 
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
@@ -198,13 +203,13 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
     try:
         process = await asyncio.create_subprocess_exec(
             *cmd,
-            stdin=asyncio.subprocess.DEVNULL,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
         )
         stdout, stderr = await asyncio.wait_for(
-            process.communicate(),
+            process.communicate(input=full_prompt.encode()),
             timeout=timeout
         )
     except asyncio.TimeoutError:
