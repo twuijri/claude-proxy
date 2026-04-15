@@ -222,30 +222,65 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
 
     return stdout.decode().strip()
 
-async def text_to_sse(text: str, model: str) -> AsyncIterator[str]:
-    """يحول نص عادي إلى SSE بصيغة OpenAI."""
+async def stream_with_keepalive(
+    prompt: str, model: str, system: str, tools: Optional[List[Any]]
+) -> AsyncIterator[str]:
+    """
+    يبدأ الـ stream فوراً بـ role chunk (TTFB سريع)،
+    ثم keep-alive comments أثناء انتظار CLI،
+    ثم يبث المحتوى أو tool_calls لما يجهز.
+    """
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
 
-    # الـ chunk الأول: role فقط
-    yield f"data: {json.dumps({'id': request_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model, 'choices': [{'index': 0, 'delta': {'role': 'assistant'}, 'finish_reason': None}]})}\n\n"
-
-    # بث المحتوى
-    words = text.split(" ")
-    for i, word in enumerate(words):
-        piece = word if i == 0 else " " + word
-        chunk = {
+    def chunk(delta: dict, finish: Optional[str] = None) -> str:
+        return "data: " + json.dumps({
             "id": request_id,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
-            "choices": [{"index": 0, "delta": {"content": piece}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(chunk)}\n\n"
-        await asyncio.sleep(0.01)
+            "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
+        }) + "\n\n"
 
-    # إشارة النهاية
-    yield f"data: {json.dumps({'id': request_id, 'object': 'chat.completion.chunk', 'created': created, 'model': model, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}]})}\n\n"
+    # أول chunk فوراً — يخبر العميل أن الاتصال حي
+    yield chunk({"role": "assistant"})
+
+    # شغّل CLI في الخلفية
+    cli_task = asyncio.create_task(run_claude_cli(prompt, model, system))
+
+    # keep-alive كل 3 ثواني لحد ما يخلص
+    try:
+        while not cli_task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(cli_task), timeout=3)
+            except asyncio.TimeoutError:
+                yield ": keep-alive\n\n"
+        text = cli_task.result()
+    except HTTPException as e:
+        yield chunk({"content": f"[error: {e.detail}]"}, finish="stop")
+        yield "data: [DONE]\n\n"
+        return
+    except Exception as e:
+        yield chunk({"content": f"[error: {e}]"}, finish="stop")
+        yield "data: [DONE]\n\n"
+        return
+
+    # افحص tool_calls
+    tool_calls = parse_tool_calls(text) if tools else None
+    if tool_calls:
+        yield chunk({"tool_calls": tool_calls})
+        yield chunk({}, finish="tool_calls")
+        yield "data: [DONE]\n\n"
+        return
+
+    # بث المحتوى كلمة كلمة
+    words = text.split(" ")
+    for i, word in enumerate(words):
+        piece = word if i == 0 else " " + word
+        yield chunk({"content": piece})
+        await asyncio.sleep(0.005)
+
+    yield chunk({}, finish="stop")
     yield "data: [DONE]\n\n"
 
 async def tool_calls_to_sse(tool_calls: List[dict], model: str) -> AsyncIterator[str]:
@@ -304,10 +339,16 @@ async def chat_completions(req: ChatRequest):
         tools_instruction = build_tools_prompt(req.tools)
         system = f"{tools_instruction}\n\n{system}" if system else tools_instruction
 
-    # دائماً نجيب الرد الكامل أولاً — ثم نحوّله حسب الطلب
+    # الـ streaming: نبدأ SSE فوراً ونشغّل CLI داخل الـ generator (TTFB سريع)
+    if req.stream:
+        return StreamingResponse(
+            stream_with_keepalive(prompt, model, system, req.tools),
+            media_type="text/event-stream",
+        )
+
+    # Non-streaming: ننتظر الرد الكامل
     text = await run_claude_cli(prompt, model, system)
 
-    # كشف tool call في الرد
     tool_calls = parse_tool_calls(text) if req.tools else None
     if req.tools:
         log.info(f"CLI response (first 300 chars): {text[:300]}")
@@ -315,8 +356,6 @@ async def chat_completions(req: ChatRequest):
 
     if tool_calls:
         log.info(f"Tool call detected: {[c['function']['name'] for c in tool_calls]}")
-        if req.stream:
-            return StreamingResponse(tool_calls_to_sse(tool_calls, model), media_type="text/event-stream")
         return JSONResponse({
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
             "object": "chat.completion",
@@ -325,9 +364,6 @@ async def chat_completions(req: ChatRequest):
             "choices": [{"index": 0, "message": {"role": "assistant", "content": None, "tool_calls": tool_calls}, "finish_reason": "tool_calls"}],
             "usage": {"prompt_tokens": -1, "completion_tokens": -1, "total_tokens": -1},
         })
-
-    if req.stream:
-        return StreamingResponse(text_to_sse(text, model), media_type="text/event-stream")
 
     return JSONResponse({
         "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
