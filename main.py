@@ -248,15 +248,16 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
     # - user → stdin
     # --tools "": نعطّل أدوات CLI الداخلية عشان Claude ما يحاول ينفذ
     #              Bash/Edit داخل container البروكسي.
+    # نستبدل system prompt كامل عشان نتخلص من Claude Code default (طويل + يتكلم عن أدوات لا نريدها)
+    final_system = system or "You are a helpful AI assistant."
     cmd = ["claude", "--dangerously-skip-permissions", "-p",
            "--output-format", "stream-json", "--verbose",
            "--include-partial-messages", "--no-session-persistence",
            "--tools", "",
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
            "--disable-slash-commands",
+           "--system-prompt", final_system,
            "--model", model]
-    if system:
-        cmd += ["--append-system-prompt", system]
     log.info(f"CLI (stream) → model={model}, prompt_len={len(prompt)}, sys_len={len(system or '')}")
 
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
