@@ -214,9 +214,11 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
         raise HTTPException(status_code=500, detail="Claude CLI غير موجود في الـ container")
 
     if process.returncode != 0:
-        err = stderr.decode().strip()
-        log.error(f"Claude CLI error (exit {process.returncode}): {err}")
-        raise HTTPException(status_code=500, detail=f"Claude CLI error: {err}")
+        err_text = stderr.decode().strip()
+        out_text = stdout.decode().strip()
+        log.error(f"Claude CLI error (exit {process.returncode}) stderr={err_text!r} stdout={out_text!r}")
+        detail = err_text or out_text or f"CLI exited with code {process.returncode}"
+        raise HTTPException(status_code=500, detail=f"Claude CLI error: {detail}")
 
     return stdout.decode().strip()
 
