@@ -405,6 +405,7 @@ hr{border:none;border-top:1px solid #334155;margin:1.3rem 0}
   <div id="sec-oauth" style="display:none">
     <p class="lbl">افتح هذا الرابط في المتصفح (انقر للنسخ):</p>
     <div class="url-box" id="url-box" onclick="copyUrl()"></div>
+    <p class="lbl" id="copy-msg" style="color:#22c55e;display:none">✓ تم النسخ</p>
     <hr>
     <p class="lbl">بعد الموافقة، أدخل الكود الذي ظهر لك:</p>
     <input type="text" id="code-inp" placeholder="أدخل الكود هنا"
@@ -476,7 +477,7 @@ async function startLogin(){
 }
 
 function copyToClipboard(text, onSuccess){
-  if(navigator.clipboard && navigator.clipboard.writeText){
+  if(navigator.clipboard && navigator.clipboard.writeText && window.isSecureContext){
     navigator.clipboard.writeText(text).then(onSuccess).catch(()=>fallbackCopy(text,onSuccess));
   } else {
     fallbackCopy(text, onSuccess);
@@ -485,32 +486,36 @@ function copyToClipboard(text, onSuccess){
 function fallbackCopy(text, onSuccess){
   const ta = document.createElement('textarea');
   ta.value = text;
-  ta.style.position = 'fixed'; ta.style.opacity = '0';
+  ta.setAttribute('readonly','');
+  ta.style.position='fixed'; ta.style.left='-9999px'; ta.style.top='0';
   document.body.appendChild(ta);
-  ta.focus(); ta.select();
-  try{ document.execCommand('copy'); onSuccess(); }catch(e){}
+  ta.focus();
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  try{ if(document.execCommand('copy')) onSuccess(); }catch(e){}
   document.body.removeChild(ta);
+}
+
+function flashCopyMsg(){
+  const m = document.getElementById('copy-msg');
+  m.style.display='block';
+  clearTimeout(window._copyT);
+  window._copyT = setTimeout(()=>{ m.style.display='none'; }, 2500);
 }
 
 function showOAuth(url){
   document.getElementById('sec-btn').style.display='none';
   document.getElementById('sec-oauth').style.display='block';
   const b = document.getElementById('url-box');
+  if(b.dataset.url === url) return;
   b.textContent = url;
   b.dataset.url = url;
-  copyToClipboard(url, ()=>{
-    b.textContent = '✓ تم النسخ — ' + url;
-    setTimeout(()=>{ b.textContent = url; }, 2500);
-  });
+  copyToClipboard(url, flashCopyMsg);
 }
 
 function copyUrl(){
   const url = document.getElementById('url-box').dataset.url;
-  const b = document.getElementById('url-box');
-  copyToClipboard(url, ()=>{
-    b.textContent='تم النسخ ✓';
-    setTimeout(()=>{ b.textContent=url; }, 2000);
-  });
+  copyToClipboard(url, flashCopyMsg);
 }
 
 async function submitCode(){
