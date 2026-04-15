@@ -665,19 +665,37 @@ async def ui_submit_code(request: Request):
     if not _auth_proc or _auth_proc.returncode is not None:
         raise HTTPException(status_code=400, detail="لا توجد جلسة مصادقة نشطة")
 
+    log.info(f"Auth: submitting code (length={len(code)})")
     os.write(_auth_master_fd, (code + "\r").encode())
 
     # Poll every 2s for up to 90s — succeed as soon as credentials appear on disk
+    # وكذلك اقرأ من الـ PTY عشان نشوف ردة فعل CLI في الـ logs
     success = False
+    pty_buffer = b""
     for _ in range(45):
         await asyncio.sleep(2)
+        # اقرأ أي output جديد من CLI
+        try:
+            while True:
+                chunk = os.read(_auth_master_fd, 4096)
+                if not chunk:
+                    break
+                pty_buffer += chunk
+                log.info(f"Auth submit pty: {chunk!r}")
+        except BlockingIOError:
+            pass
+        except OSError:
+            break
+
         if is_authenticated():
             success = True
             break
         if _auth_proc.returncode is not None:
             success = _auth_proc.returncode == 0
+            log.info(f"Auth: CLI exited code={_auth_proc.returncode}")
             break
 
+    log.info(f"Auth: submit-code result success={success} authenticated={is_authenticated()}")
     try:
         os.close(_auth_master_fd)
     except OSError:
