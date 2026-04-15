@@ -666,7 +666,13 @@ async def ui_submit_code(request: Request):
         raise HTTPException(status_code=400, detail="لا توجد جلسة مصادقة نشطة")
 
     log.info(f"Auth: submitting code (length={len(code)})")
-    os.write(_auth_master_fd, (code + "\r").encode())
+    # The CLI enables bracketed paste mode (ESC[?2004h) at startup.
+    # Wrap code in paste markers, then send Enter as a separate subsequent keypress.
+    paste_start = b"\x1b[200~"
+    paste_end   = b"\x1b[201~"
+    os.write(_auth_master_fd, paste_start + code.encode() + paste_end)
+    await asyncio.sleep(0.3)
+    os.write(_auth_master_fd, b"\r")
 
     # Poll every 2s for up to 90s — succeed as soon as credentials appear on disk
     # وكذلك اقرأ من الـ PTY عشان نشوف ردة فعل CLI في الـ logs
