@@ -192,11 +192,16 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
             detail="لا يوجد مصادقة. شغّل: docker exec -it claude-proxy claude"
         )
 
-    full_prompt = f"{system}\n\n{prompt}" if system else prompt
-
-    # نرسل الـ prompt عبر stdin لتجنب "Argument list too long" مع الـ prompts الطويلة
-    cmd = ["claude", "--dangerously-skip-permissions", "-p", "--model", model]
-    log.info(f"CLI → model={model}, prompt_len={len(full_prompt)}")
+    # نرسل الـ prompt عبر stdin لتجنب "Argument list too long"
+    # system prompt عبر --system-prompt flag بدل دمجه في user prompt
+    cmd = ["claude", "--dangerously-skip-permissions", "-p",
+           "--tools", "",
+           "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+           "--disable-slash-commands",
+           "--model", model]
+    if system:
+        cmd += ["--system-prompt", system]
+    log.info(f"CLI → model={model}, prompt_len={len(prompt)}, sys_len={len(system or '')}")
 
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
 
@@ -209,7 +214,7 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
             env=env,
         )
         stdout, stderr = await asyncio.wait_for(
-            process.communicate(input=full_prompt.encode()),
+            process.communicate(input=prompt.encode()),
             timeout=timeout
         )
     except asyncio.TimeoutError:
@@ -238,12 +243,21 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
         yield {"type": "error", "detail": "لا يوجد مصادقة"}
         return
 
-    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    # نفصل system عن user prompt:
+    # - system → --system-prompt (Claude يعتبرها توجيهات أصلية)
+    # - user → stdin
+    # --tools "": نعطّل أدوات CLI الداخلية عشان Claude ما يحاول ينفذ
+    #              Bash/Edit داخل container البروكسي.
     cmd = ["claude", "--dangerously-skip-permissions", "-p",
            "--output-format", "stream-json", "--verbose",
            "--include-partial-messages", "--no-session-persistence",
+           "--tools", "",
+           "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
+           "--disable-slash-commands",
            "--model", model]
-    log.info(f"CLI (stream) → model={model}, prompt_len={len(full_prompt)}")
+    if system:
+        cmd += ["--append-system-prompt", system]
+    log.info(f"CLI (stream) → model={model}, prompt_len={len(prompt)}, sys_len={len(system or '')}")
 
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
 
@@ -260,7 +274,7 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
         return
 
     # اكتب الـ prompt للـ stdin ثم أغلقه
-    process.stdin.write(full_prompt.encode())
+    process.stdin.write(prompt.encode())
     await process.stdin.drain()
     process.stdin.close()
 
