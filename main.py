@@ -240,7 +240,9 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
 
     full_prompt = f"{system}\n\n{prompt}" if system else prompt
     cmd = ["claude", "--dangerously-skip-permissions", "-p",
-           "--output-format", "stream-json", "--verbose", "--model", model]
+           "--output-format", "stream-json", "--verbose",
+           "--include-partial-messages", "--no-session-persistence",
+           "--model", model]
     log.info(f"CLI (stream) → model={model}, prompt_len={len(full_prompt)}")
 
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
@@ -273,12 +275,23 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
             except json.JSONDecodeError:
                 continue
             t = data.get("type")
-            if t == "assistant":
+            if t == "stream_event":
+                # مع --include-partial-messages: events مباشرة من Anthropic API
+                ev = data.get("event", {}) or {}
+                if ev.get("type") == "content_block_delta":
+                    delta = ev.get("delta", {}) or {}
+                    if delta.get("type") == "text_delta":
+                        text = delta.get("text", "")
+                        if text:
+                            accumulated.append(text)
+                            yield {"type": "text", "text": text}
+            elif t == "assistant":
+                # fallback لو لسبب ما partial messages مو مفعلة
                 msg = data.get("message", {}) or {}
                 for c in msg.get("content", []) or []:
                     if c.get("type") == "text":
                         text = c.get("text", "")
-                        if text:
+                        if text and text not in "".join(accumulated):
                             accumulated.append(text)
                             yield {"type": "text", "text": text}
             elif t == "result":
