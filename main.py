@@ -182,7 +182,7 @@ def parse_tool_calls(text: str) -> Optional[List[dict]]:
     return None
 
 # ─── Claude CLI Runner ───────────────────────────────────────────────────────
-async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int = 300) -> str:
+async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int = 900) -> str:
     """
     يشغّل `claude -p "..."` كـ subprocess ويرجع الرد كاملاً.
     """
@@ -227,13 +227,83 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
 
     return stdout.decode().strip()
 
+async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> AsyncIterator[dict]:
+    """
+    يشغّل Claude CLI مع stream-json ويرجع events نوع:
+    - {"type":"text","text":"..."} لكل قطعة نص من Claude
+    - {"type":"done","text":"<full>"} في النهاية
+    - {"type":"error","detail":"..."} عند فشل
+    """
+    if not is_authenticated():
+        yield {"type": "error", "detail": "لا يوجد مصادقة"}
+        return
+
+    full_prompt = f"{system}\n\n{prompt}" if system else prompt
+    cmd = ["claude", "--dangerously-skip-permissions", "-p",
+           "--output-format", "stream-json", "--verbose", "--model", model]
+    log.info(f"CLI (stream) → model={model}, prompt_len={len(full_prompt)}")
+
+    env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
+
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+        )
+    except FileNotFoundError:
+        yield {"type": "error", "detail": "Claude CLI غير موجود"}
+        return
+
+    # اكتب الـ prompt للـ stdin ثم أغلقه
+    process.stdin.write(full_prompt.encode())
+    await process.stdin.drain()
+    process.stdin.close()
+
+    accumulated = []
+    try:
+        while True:
+            line = await asyncio.wait_for(process.stdout.readline(), timeout=900)
+            if not line:
+                break
+            try:
+                data = json.loads(line.decode().strip())
+            except json.JSONDecodeError:
+                continue
+            t = data.get("type")
+            if t == "assistant":
+                msg = data.get("message", {}) or {}
+                for c in msg.get("content", []) or []:
+                    if c.get("type") == "text":
+                        text = c.get("text", "")
+                        if text:
+                            accumulated.append(text)
+                            yield {"type": "text", "text": text}
+            elif t == "result":
+                if data.get("is_error"):
+                    yield {"type": "error", "detail": data.get("result", "CLI error")}
+                    return
+    except asyncio.TimeoutError:
+        process.kill()
+        yield {"type": "error", "detail": "انتهت مهلة CLI"}
+        return
+    finally:
+        if process.returncode is None:
+            try:
+                await asyncio.wait_for(process.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                process.kill()
+
+    yield {"type": "done", "text": "".join(accumulated)}
+
+
 async def stream_with_keepalive(
     prompt: str, model: str, system: str, tools: Optional[List[Any]]
 ) -> AsyncIterator[str]:
     """
-    يبدأ الـ stream فوراً بـ role chunk (TTFB سريع)،
-    ثم keep-alive comments أثناء انتظار CLI،
-    ثم يبث المحتوى أو tool_calls لما يجهز.
+    SSE: TTFB سريع + streaming حقيقي من CLI.
     """
     request_id = f"chatcmpl-{uuid.uuid4().hex[:24]}"
     created = int(time.time())
@@ -247,43 +317,52 @@ async def stream_with_keepalive(
             "choices": [{"index": 0, "delta": delta, "finish_reason": finish}],
         }) + "\n\n"
 
-    # أول chunk فوراً — يخبر العميل أن الاتصال حي
     yield chunk({"role": "assistant"})
 
-    # شغّل CLI في الخلفية
-    cli_task = asyncio.create_task(run_claude_cli(prompt, model, system))
+    buffered = ""  # للـ tool_calls detection: نحتفظ بالنص كامل
+    emitted_any_text = False
+    last_keepalive = asyncio.get_event_loop().time()
 
-    # keep-alive كل 3 ثواني لحد ما يخلص
     try:
-        while not cli_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(cli_task), timeout=3)
-            except asyncio.TimeoutError:
+        async for event in stream_claude_cli_chunks(prompt, model, system):
+            now = asyncio.get_event_loop().time()
+            etype = event["type"]
+            if etype == "text":
+                text = event["text"]
+                buffered += text
+                # إذا الـ tools مفعلة، انتظر لحد ما نعرف إذا الرد tool_call (نبعث بالكل في الآخر)
+                # وإلا، ابث فوراً
+                if not tools:
+                    yield chunk({"content": text})
+                    emitted_any_text = True
+                last_keepalive = now
+            elif etype == "error":
+                yield chunk({"content": f"[error: {event['detail']}]"}, finish="stop")
+                yield "data: [DONE]\n\n"
+                return
+            elif etype == "done":
+                break
+
+            # keep-alive إذا طولنا بدون output
+            if now - last_keepalive > 3:
                 yield ": keep-alive\n\n"
-        text = cli_task.result()
-    except HTTPException as e:
-        yield chunk({"content": f"[error: {e.detail}]"}, finish="stop")
-        yield "data: [DONE]\n\n"
-        return
+                last_keepalive = now
     except Exception as e:
         yield chunk({"content": f"[error: {e}]"}, finish="stop")
         yield "data: [DONE]\n\n"
         return
 
-    # افحص tool_calls
-    tool_calls = parse_tool_calls(text) if tools else None
-    if tool_calls:
-        yield chunk({"tool_calls": tool_calls})
-        yield chunk({}, finish="tool_calls")
-        yield "data: [DONE]\n\n"
-        return
-
-    # بث المحتوى كلمة كلمة
-    words = text.split(" ")
-    for i, word in enumerate(words):
-        piece = word if i == 0 else " " + word
-        yield chunk({"content": piece})
-        await asyncio.sleep(0.005)
+    # فحص tool_calls على النص المجمع
+    if tools:
+        tool_calls = parse_tool_calls(buffered)
+        if tool_calls:
+            yield chunk({"tool_calls": tool_calls})
+            yield chunk({}, finish="tool_calls")
+            yield "data: [DONE]\n\n"
+            return
+        # لم يكن tool_call — ابث النص المجمع الحين
+        if not emitted_any_text and buffered:
+            yield chunk({"content": buffered})
 
     yield chunk({}, finish="stop")
     yield "data: [DONE]\n\n"
