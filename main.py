@@ -17,11 +17,24 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 # ─── Logging ─────────────────────────────────────────────────────────────────
+from collections import deque
+
+class MemoryLogHandler(logging.Handler):
+    """يحتفظ بآخر N سطر في الذاكرة للعرض عبر /admin/logs."""
+    def __init__(self, max_lines: int = 500):
+        super().__init__()
+        self.buffer = deque(maxlen=max_lines)
+    def emit(self, record):
+        self.buffer.append(self.format(record))
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 log = logging.getLogger("claude-proxy")
+_mem_log = MemoryLogHandler(500)
+_mem_log.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s"))
+logging.getLogger().addHandler(_mem_log)
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 PROXY_API_KEY = os.environ.get("PROXY_API_KEY", "proxy-key-change-me")
@@ -424,6 +437,12 @@ async def health():
         status_code=200 if ok else 503,
         content={"status": "healthy" if ok else "unauthenticated", "timestamp": int(time.time())}
     )
+
+@app.get("/admin/logs", dependencies=[Depends(verify_ui)])
+async def admin_logs(n: int = 100):
+    """آخر N سطر من الـ logs — محمي بكلمة سر الـ UI."""
+    lines = list(_mem_log.buffer)
+    return {"lines": lines[-n:], "total": len(lines)}
 
 @app.post("/auth/refresh")
 async def refresh_auth():
