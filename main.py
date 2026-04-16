@@ -216,6 +216,7 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
            "--tools", "",
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
            "--disable-slash-commands",
+           "--exclude-dynamic-system-prompt-sections",
            "--system-prompt-file", sys_file.name,
            "--model", model]
     log.info(f"CLI → model={model}, prompt_len={len(prompt)}, sys_len={len(final_system)}")
@@ -283,6 +284,7 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
            "--tools", "",
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
            "--disable-slash-commands",
+           "--exclude-dynamic-system-prompt-sections",
            "--system-prompt-file", sys_file.name,
            "--model", model]
     log.info(f"CLI (stream) → model={model}, prompt_len={len(prompt)}, sys_len={len(system or '')}")
