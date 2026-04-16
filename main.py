@@ -438,12 +438,6 @@ async def health():
         content={"status": "healthy" if ok else "unauthenticated", "timestamp": int(time.time())}
     )
 
-@app.get("/admin/logs", dependencies=[Depends(verify_ui)])
-async def admin_logs(n: int = 100):
-    """آخر N سطر من الـ logs — محمي بكلمة سر الـ UI."""
-    lines = list(_mem_log.buffer)
-    return {"lines": lines[-n:], "total": len(lines)}
-
 @app.post("/auth/refresh")
 async def refresh_auth():
     ok = is_authenticated()
@@ -730,6 +724,12 @@ show('s-login');
 async def verify_ui(request: Request):
     if request.headers.get("X-UI-Password", "") != UI_PASSWORD:
         raise HTTPException(status_code=403, detail="كلمة مرور خاطئة")
+
+@app.get("/admin/logs", dependencies=[Depends(verify_ui)])
+async def admin_logs(n: int = 100):
+    """آخر N سطر من الـ logs — محمي بكلمة سر الـ UI."""
+    lines = list(_mem_log.buffer)
+    return {"lines": lines[-n:], "total": len(lines)}
 
 @app.get("/ui", response_class=HTMLResponse)
 async def ui_page():
