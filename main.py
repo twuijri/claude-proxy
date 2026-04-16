@@ -4,6 +4,7 @@ import pty
 import fcntl
 import struct
 import termios
+import tempfile
 import json
 import uuid
 import time
@@ -205,16 +206,19 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
             detail="لا يوجد مصادقة. شغّل: docker exec -it claude-proxy claude"
         )
 
-    # نرسل الـ prompt عبر stdin لتجنب "Argument list too long"
-    # system prompt عبر --system-prompt flag بدل دمجه في user prompt
+    # نرسل الـ prompt عبر stdin والـ system عبر ملف مؤقت لتجنب ARG_MAX
+    final_system = system or "You are a helpful AI assistant."
+    sys_file = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+    sys_file.write(final_system)
+    sys_file.close()
+
     cmd = ["claude", "--dangerously-skip-permissions", "-p",
            "--tools", "",
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
            "--disable-slash-commands",
+           "--system-prompt-file", sys_file.name,
            "--model", model]
-    if system:
-        cmd += ["--system-prompt", system]
-    log.info(f"CLI → model={model}, prompt_len={len(prompt)}, sys_len={len(system or '')}")
+    log.info(f"CLI → model={model}, prompt_len={len(prompt)}, sys_len={len(final_system)}")
 
     env = {**os.environ, "HOME": "/home/claude", "USER": "claude", "LOGNAME": "claude"}
 
@@ -235,6 +239,11 @@ async def run_claude_cli(prompt: str, model: str, system: str = "", timeout: int
         raise HTTPException(status_code=504, detail="انتهت مهلة الطلب (timeout)")
     except FileNotFoundError:
         raise HTTPException(status_code=500, detail="Claude CLI غير موجود في الـ container")
+
+    try:
+        os.unlink(sys_file.name)
+    except OSError:
+        pass
 
     if process.returncode != 0:
         err_text = stderr.decode().strip()
@@ -261,15 +270,20 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
     # - user → stdin
     # --tools "": نعطّل أدوات CLI الداخلية عشان Claude ما يحاول ينفذ
     #              Bash/Edit داخل container البروكسي.
-    # نستبدل system prompt كامل عشان نتخلص من Claude Code default (طويل + يتكلم عن أدوات لا نريدها)
+    # نستبدل system prompt كامل عشان نتخلص من Claude Code default
+    # نكتبه لملف مؤقت عشان ما نتجاوز ARG_MAX (system prompt ممكن 100KB+)
     final_system = system or "You are a helpful AI assistant."
+    sys_file = tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False)
+    sys_file.write(final_system)
+    sys_file.close()
+
     cmd = ["claude", "--dangerously-skip-permissions", "-p",
            "--output-format", "stream-json", "--verbose",
            "--include-partial-messages", "--no-session-persistence",
            "--tools", "",
            "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
            "--disable-slash-commands",
-           "--system-prompt", final_system,
+           "--system-prompt-file", sys_file.name,
            "--model", model]
     log.info(f"CLI (stream) → model={model}, prompt_len={len(prompt)}, sys_len={len(system or '')}")
 
@@ -336,6 +350,10 @@ async def stream_claude_cli_chunks(prompt: str, model: str, system: str) -> Asyn
                 await asyncio.wait_for(process.wait(), timeout=5)
             except asyncio.TimeoutError:
                 process.kill()
+        try:
+            os.unlink(sys_file.name)
+        except OSError:
+            pass
 
     yield {"type": "done", "text": "".join(accumulated)}
 
